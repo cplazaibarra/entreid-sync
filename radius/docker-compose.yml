@@ -1,0 +1,79 @@
+services:
+  auth-db:
+    image: mariadb:10.11
+    container_name: auth-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_pass_mquest_2026
+      MYSQL_DATABASE: privacyidea
+      MYSQL_USER: privacyidea
+      MYSQL_PASSWORD: db_pass_mquest_2026
+    volumes:
+      - ./mysql-data:/var/lib/mysql
+    networks:
+      - auth_network
+
+  privacyidea:
+    image: gpappsoft/privacyidea-docker:latest
+    container_name: privacyidea
+    restart: unless-stopped
+    depends_on:
+      - auth-db
+    ports:
+      - "8000:8080"
+    environment:
+      - PI_ADDRESS=0.0.0.0
+      - PI_PORT=8080
+      - PI_ADMIN=admin
+      - PI_ADMIN_PASS=admin_pass_mquest_2026
+      - DB_API=mariadb+pymysql
+      - DB_USER=privacyidea
+      - DB_PASSWORD=db_pass_mquest_2026
+      - DB_HOST=auth-db
+      - DB_PORT=3306
+      - DB_NAME=privacyidea
+      - PI_PEPPER=pepper_pass_mquest_2026
+      - PI_SECRET=secret_key_mquest_2026
+      - PI_UPDATE=True
+    volumes:
+      - ./privacyidea-data:/privacyidea/etc/persistent
+    networks:
+      - auth_network
+
+  freeradius:
+    image: gpappsoft/privacyidea-freeradius:latest
+    container_name: freeradius
+    entrypoint: ["/opt/sbin/radiusd", "-f"]
+    restart: unless-stopped
+    depends_on:
+      - privacyidea
+    ports:
+      - "1812:1812/udp"
+      - "1813:1813/udp"
+    environment:
+      - RADIUS_PI_HOST=http://privacyidea:8080
+      - RADIUS_PI_SSLCHECK=false
+      - RADIUS_PI_TIMEOUT=10
+    volumes:
+      - ./freeradius/config:/etc/raddb
+    networks:
+      - auth_network
+
+  entraid-sync:
+    build:
+      context: ../sync
+    container_name: entraid-sync
+    restart: unless-stopped
+    ports:
+      - "5500:5500"
+    volumes:
+      - ../sync/config:/app/config
+    networks:
+      - auth_network
+    depends_on:
+      - auth-db
+
+networks:
+  auth_network:
+    name: auth_network
+    driver: bridge

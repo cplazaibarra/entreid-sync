@@ -1,0 +1,22 @@
+# Sensitive configurations
+sync/config/*.json
+radius/database_backup.sql
+radius/privacyidea-data/
+
+# MariaDB Data directory
+radius/mysql-data/
+
+# VM images
+vm/
+
+# Database, logs & compressed files
+*.sqlite
+*.log
+*.tar.gz
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.venv/

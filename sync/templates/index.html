@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EntreID-Sync - Microsoft Entra ID a privacyIDEA</title>
+    <!-- Google Fonts Outfit & Plus Jakarta Sans -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: #151d30;
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --success: #10b981;
+            --error: #ef4444;
+            --border-color: #1e293b;
+            --font-family: 'Plus Jakarta Sans', 'Outfit', system-ui, -apple-system, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            font-family: var(--font-family);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-image: radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.08) 0%, transparent 45%),
+                              radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.05) 0%, transparent 45%);
+        }
+
+        .container {
+            width: 100%;
+            max-width: 650px;
+            padding: 40px 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .logo {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #3b82f6 0%, #10b981 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 5px;
+            letter-spacing: -0.5px;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            margin: 0;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 
+                        0 8px 10px -6px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            margin-bottom: 20px;
+        }
+
+        .section-title {
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin-top: 0;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        input[type="text"],
+        input[type="password"],
+        input[type="time"],
+        select {
+            width: 100%;
+            padding: 12px 16px;
+            background-color: rgba(11, 15, 25, 0.6);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: var(--font-family);
+            font-size: 0.95rem;
+            box-sizing: border-box;
+            transition: all 0.3s ease;
+        }
+
+        input[type="text"]:focus,
+        input[type="password"]:focus,
+        input[type="time"]:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+            background-color: rgba(11, 15, 25, 0.8);
+        }
+
+        input:disabled, select:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 14px 20px;
+            border: none;
+            border-radius: 8px;
+            font-family: var(--font-family);
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: center;
+            display: inline-block;
+            box-sizing: border-box;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        .btn-primary {
+            background-color: var(--primary);
+            color: white;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background-color: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-success {
+            background-color: #10b981;
+            color: white;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background-color: #059669;
+            transform: translateY(-1px);
+        }
+
+        .alert {
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .alert-success {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .alert-danger {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: var(--error);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .status-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.9rem;
+        }
+
+        .status-label {
+            color: var(--text-secondary);
+        }
+
+        .status-value {
+            font-weight: 500;
+        }
+
+        .badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-success {
+            background-color: rgba(16, 185, 129, 0.15);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .badge-error {
+            background-color: rgba(239, 68, 68, 0.15);
+            color: var(--error);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .badge-never {
+            background-color: rgba(156, 163, 175, 0.15);
+            color: var(--text-secondary);
+            border: 1px solid rgba(156, 163, 175, 0.3);
+        }
+
+        .status-message {
+            margin-top: 10px;
+            background-color: rgba(11, 15, 25, 0.4);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: #d1d5db;
+            word-break: break-all;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (max-width: 600px) {
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 15px;
+            }
+            .grid-2 {
+                grid-template-columns: 1fr;
+                gap: 0;
+            }
+            .button-group {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <div class="logo">EntreID-Sync</div>
+                <p class="subtitle">Sincronizador local de Microsoft Entra ID a la base de datos de privacyIDEA</p>
+            </div>
+            <div style="text-align: right; font-size: 0.85rem; color: var(--text-secondary);">
+                Conectado como: <strong style="color: var(--text-primary);">{{ current_user }}</strong> ({{ 'Escritura' if current_role == 'write' else 'Lectura' }})<br>
+                <a href="/logout" style="color: var(--error); text-decoration: none; font-weight: 600; display: inline-block; margin-top: 5px;">Cerrar Sesión ➔</a>
+            </div>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{% if category == 'success' %}success{% else %}danger{% endif %}">
+                        {% if category == 'success' %}✓{% else %}✗{% endif %} {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <div class="card">
+            <h2 class="section-title">🔌 Configuración de Microsoft Entra ID</h2>
+            <form method="POST" action="/">
+                <input type="hidden" name="action" value="save">
+                
+                <div class="form-group">
+                    <label for="tenant_id">Tenant (Directory) ID</label>
+                    <input type="text" id="tenant_id" name="tenant_id" value="{{ config.tenant_id }}" placeholder="ej. 8a34b9d0-..." required {% if current_role != 'write' %}disabled{% endif %}>
+                </div>
+
+                <div class="form-group">
+                    <label for="client_id">Application (Client) ID</label>
+                    <input type="text" id="client_id" name="client_id" value="{{ config.client_id }}" placeholder="ej. 1a23c4d5-..." required {% if current_role != 'write' %}disabled{% endif %}>
+                </div>
+
+                <div class="form-group">
+                    <label for="client_secret">Client Secret</label>
+                    <input type="password" id="client_secret" name="client_secret" placeholder="{% if config.client_secret %}•••••••••••••••••••••••• (Guardado, dejar vacío para no modificar){% else %}Ingrese el client secret de la aplicación{% endif %}" {% if current_role != 'write' %}disabled{% endif %}>
+                </div>
+
+                <h2 class="section-title" style="margin-top: 40px;">📅 Programación de Sincronización</h2>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="sync_frequency">Frecuencia de sincronización</label>
+                        <select id="sync_frequency" name="sync_frequency" {% if current_role != 'write' %}disabled{% endif %}>
+                            <option value="0" {% if config.sync_frequency == 0 %}selected{% endif %}>Deshabilitada</option>
+                            <option value="1" {% if config.sync_frequency == 1 %}selected{% endif %}>1 vez al día (a la hora indicada)</option>
+                            <option value="2" {% if config.sync_frequency == 2 %}selected{% endif %}>2 veces al día (cada 12 horas)</option>
+                            <option value="4" {% if config.sync_frequency == 4 %}selected{% endif %}>4 veces al día (cada 6 horas)</option>
+                            <option value="12" {% if config.sync_frequency == 12 %}selected{% endif %}>12 veces al día (cada 2 horas)</option>
+                            <option value="24" {% if config.sync_frequency == 24 %}selected{% endif %}>Cada hora</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="hour-group">
+                        <label for="sync_hour">Hora de ejecución (1 vez al día)</label>
+                        <input type="time" id="sync_hour" name="sync_hour" value="{{ config.sync_hour }}" {% if current_role != 'write' %}disabled{% endif %}>
+                    </div>
+                </div>
+
+                {% if current_role == 'write' %}
+                <div class="button-group">
+                    <button type="submit" class="btn btn-primary">Guardar Configuración</button>
+                </div>
+                {% endif %}
+            </form>
+        </div>
+
+        <div class="card">
+            <h2 class="section-title">📊 Estado de la Sincronización</h2>
+            <div class="status-container">
+                <div class="status-row">
+                    <span class="status-label">Último Estado:</span>
+                    <span class="status-value">
+                        {% if config.last_status == 'success' %}
+                            <span class="badge badge-success">Éxito</span>
+                        {% elif config.last_status == 'error' %}
+                            <span class="badge badge-error">Error</span>
+                        {% else %}
+                            <span class="badge badge-never">Nunca</span>
+                        {% endif %}
+                    </span>
+                </div>
+                
+                <div class="status-row">
+                    <span class="status-label">Última ejecución:</span>
+                    <span class="status-value">{% if config.last_run %}{{ config.last_run }}{% else %}-{% endif %}</span>
+                </div>
+
+                <div class="status-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
+                    <span class="status-label">Detalle/Log de la última ejecución:</span>
+                    <div class="status-message">{{ config.last_message }}</div>
+                </div>
+
+                {% if current_role == 'write' %}
+                <form method="POST" action="/" style="margin-top: 20px; display: flex; width: 100%;">
+                    <input type="hidden" name="action" value="sync_now">
+                    <button type="submit" class="btn btn-success" style="width: 100%;">⚡ Sincronizar Ahora (Forzar)</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if current_role == 'write' %}
+        <div class="card">
+            <h2 class="section-title">👤 Gestión de Usuarios de la Aplicación</h2>
+            
+            <!-- List of existing users -->
+            <div style="margin-bottom: 25px;">
+                <label>Usuarios Registrados</label>
+                <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 8px;">
+                    {% for username, data in users.items() %}
+                        <div style="display: flex; justify-content: space-between; align-items: center; background-color: rgba(11, 15, 25, 0.4); border: 1px solid var(--border-color); padding: 10px 14px; border-radius: 8px; font-size: 0.9rem;">
+                            <div>
+                                <strong style="color: var(--text-primary);">{{ username }}</strong>
+                                <span class="badge {% if data.role == 'write' %}badge-success{% else %}badge-never{% endif %}" style="margin-left: 8px; font-size: 0.7rem; padding: 2px 8px;">
+                                    {{ 'Escritura' if data.role == 'write' else 'Lectura' }}
+                                </span>
+                            </div>
+                            {% if username != current_user %}
+                                <form method="POST" action="/" style="margin: 0;">
+                                    <input type="hidden" name="action" value="delete_user">
+                                    <input type="hidden" name="delete_username" value="{{ username }}">
+                                    <button type="submit" style="background: none; border: none; color: var(--error); cursor: pointer; font-size: 0.85rem; font-weight: 600;">Eliminar</button>
+                                </form>
+                            {% else %}
+                                <span style="font-size: 0.8rem; color: var(--text-secondary); font-style: italic;">Tú (Actual)</span>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Create new user form -->
+            <form method="POST" action="/" style="border-top: 1px solid var(--border-color); padding-top: 20px;">
+                <input type="hidden" name="action" value="add_user">
+                <label>Crear Nuevo Usuario</label>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 10px; margin-bottom: 15px;">
+                    <div class="form-group" style="margin: 0;">
+                        <input type="text" name="new_username" placeholder="Nombre de usuario" required autocomplete="username">
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <input type="password" name="new_password" placeholder="Contraseña" required autocomplete="new-password">
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; align-items: center;">
+                    <div class="form-group" style="margin: 0;">
+                        <select name="new_role">
+                            <option value="read">Rol: Lectura (Read-only)</option>
+                            <option value="write" selected>Rol: Escritura (Read-write)</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="padding: 10px 16px; font-size: 0.85rem; width: 100%;">Crear Usuario</button>
+                </div>
+            </form>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        // Dynamically hide/show the hour field based on selected frequency
+        const freqSelect = document.getElementById('sync_frequency');
+        const hourGroup = document.getElementById('hour-group');
+
+        function toggleHourField() {
+            if (freqSelect && freqSelect.value === '1') {
+                hourGroup.style.display = 'block';
+            } else if (hourGroup) {
+                hourGroup.style.display = 'none';
+            }
+        }
+
+        if (freqSelect) {
+            freqSelect.addEventListener('change', toggleHourField);
+        }
+        // Initial run
+        toggleHourField();
+    </script>
+</body>
+</html>
