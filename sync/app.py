@@ -15,6 +15,7 @@ app.secret_key = "entraid_sync_secret_key_secure_2026"
 
 CONFIG_PATH = "/app/config/config.json"
 USERS_PATH = "/app/config/users.json"
+LOG_PATH = "/app/config/sync.log"
 
 # Default configuration structure
 default_config = {
@@ -85,6 +86,23 @@ def save_users(users_data):
     except Exception as e:
         print(f"Error saving users: {e}", file=sys.stderr)
 
+# Write to log file
+def write_log(msg):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_line = f"[{timestamp}] {msg}\n"
+    try:
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        lines = []
+        if os.path.exists(LOG_PATH):
+            with open(LOG_PATH, "r") as f:
+                lines = f.readlines()
+        # Keep last 500 lines to bound file size
+        lines = lines[-500:] + [log_line]
+        with open(LOG_PATH, "w") as f:
+            f.writelines(lines)
+    except Exception as e:
+        print(f"Error writing log: {e}", file=sys.stderr)
+
 # Protect all routes
 @app.before_request
 def check_login():
@@ -119,11 +137,14 @@ def logout():
 # Global lock for sync operations to avoid concurrent runs
 sync_lock = threading.Lock()
 
-def do_sync():
+def do_sync(is_manual=True):
     """Performs the synchronization between Entra ID and MariaDB."""
     if not sync_lock.acquire(blocking=False):
         return False, "La sincronización ya está en ejecución."
 
+    trigger_type = "manual" if is_manual else "programada"
+    write_log(f"Iniciando sincronización {trigger_type}...")
+    
     config = load_config()
     db_conn = None
     
@@ -133,10 +154,13 @@ def do_sync():
 
     if not tenant_id or not client_id or not client_secret:
         sync_lock.release()
-        return False, "Error: Faltan credenciales de Entra ID por configurar."
+        error_msg = "Error: Faltan credenciales de Entra ID por configurar."
+        write_log(f"[ERROR] {error_msg}")
+        return False, error_msg
 
     try:
         # 1. Fetch access token from Microsoft Entra ID
+        write_log("Solicitando token de acceso a Entra ID...")
         token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
         token_data = {
             "client_id": client_id,
@@ -150,8 +174,10 @@ def do_sync():
             raise Exception(f"OAuth2 failed: {token_response.text}")
         
         access_token = token_response.json().get("access_token")
+        write_log("Token de acceso obtenido correctamente.")
         
         # 2. Fetch users from Microsoft Graph API
+        write_log("Consultando lista de usuarios en Microsoft Graph...")
         graph_url = "https://graph.microsoft.com/v1.0/users?$select=id,userPrincipalName,mail,givenName,surname,telephoneNumber,mobilePhone"
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -163,8 +189,10 @@ def do_sync():
             raise Exception(f"Graph API query failed: {users_response.text}")
         
         entra_users = users_response.json().get("value", [])
+        write_log(f"Se obtuvieron {len(entra_users)} usuarios desde Entra ID.")
         
         # 3. Connect to MariaDB (auth-db)
+        write_log("Conectando a la base de datos MariaDB (auth-db)...")
         db_conn = pymysql.connect(
             host="auth-db",
             user="privacyidea",
@@ -234,6 +262,7 @@ def do_sync():
                     INSERT INTO entra_users (username, email, givenname, surname, phone, groups) 
                     VALUES (%s, %s, %s, %s, %s, %s)
                 """, (username, mail_address, givenname, surname, phone, groups_str))
+                write_log(f"[CREAR] Usuario synced: {username} (Grupos: {groups_str or 'Ninguno'})")
                 inserted += 1
             else:
                 # Check if values changed
@@ -243,6 +272,7 @@ def do_sync():
                         SET email = %s, givenname = %s, surname = %s, phone = %s, groups = %s 
                         WHERE username = %s
                     """, (mail_address, givenname, surname, phone, groups_str, username))
+                    write_log(f"[ACTUALIZAR] Usuario synced: {username} (Grupos: {groups_str or 'Ninguno'})")
                     updated += 1
                     
         # Delete users that are no longer in Entra ID
@@ -253,14 +283,18 @@ def do_sync():
             cursor.execute(f"SELECT COUNT(*) FROM entra_users WHERE username NOT IN ({format_strings})", tuple(current_usernames))
             deleted = cursor.fetchone()[0]
             
-            cursor.execute(f"DELETE FROM entra_users WHERE username NOT IN ({format_strings})", tuple(current_usernames))
+            if deleted > 0:
+                cursor.execute(f"SELECT username FROM entra_users WHERE username NOT IN ({format_strings})", tuple(current_usernames))
+                for (del_user,) in cursor.fetchall():
+                    write_log(f"[ELIMINAR] Usuario obsoleto: {del_user}")
+                cursor.execute(f"DELETE FROM entra_users WHERE username NOT IN ({format_strings})", tuple(current_usernames))
         else:
-            # If Entra returned 0 users, don't delete everything just in case of API failure,
-            # unless we are sure. Let's keep it safe.
+            # Safe safeguard
             pass
 
         timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         msg = f"Sincronización exitosa: {inserted} creados, {updated} actualizados, {deleted} eliminados. Total en DB: {len(current_usernames)}."
+        write_log(msg)
         
         config["last_status"] = "success"
         config["last_run"] = timestamp_str
@@ -274,6 +308,7 @@ def do_sync():
         timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         error_msg = f"Error durante la sincronización: {str(e)}"
         print(error_msg, file=sys.stderr)
+        write_log(f"[ERROR] {error_msg}")
         
         config["last_status"] = "error"
         config["last_run"] = timestamp_str
@@ -332,7 +367,7 @@ def scheduler_loop():
                 
                 if should_run:
                     print(f"Triggering scheduled sync at {now.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-                    do_sync()
+                    do_sync(is_manual=False)
                     
         except Exception as e:
             print(f"Error in scheduler loop: {e}", file=sys.stderr)
@@ -367,11 +402,12 @@ def index():
             config["sync_hour"] = request.form.get("sync_hour", "03:00").strip()
             
             save_config(config)
+            write_log("Configuración de sincronización guardada por el administrador.")
             flash("Configuración guardada correctamente.", "success")
             return redirect(url_for("index"))
             
         elif action == "sync_now":
-            success, msg = do_sync()
+            success, msg = do_sync(is_manual=True)
             if success:
                 flash(msg, "success")
             else:
@@ -393,6 +429,7 @@ def index():
                     "role": new_role
                 }
                 save_users(users)
+                write_log(f"Nuevo usuario '{new_username}' creado con rol '{new_role}'.")
                 flash(f"Usuario '{new_username}' creado con éxito.", "success")
             return redirect(url_for("index"))
             
@@ -408,10 +445,34 @@ def index():
                 else:
                     del users[delete_username]
                     save_users(users)
+                    write_log(f"Usuario '{delete_username}' eliminado por el administrador.")
                     flash(f"Usuario '{delete_username}' eliminado.", "success")
             return redirect(url_for("index"))
 
     return render_template("index.html", config=config, users=users, current_user=current_user, current_role=current_role)
+
+@app.route("/api/logs")
+def get_logs():
+    if not os.path.exists(LOG_PATH):
+        return "No hay registros en la bitácora todavía."
+    try:
+        with open(LOG_PATH, "r") as f:
+            return f.read()
+    except Exception as e:
+        return f"Error leyendo bitácora: {str(e)}"
+
+@app.route("/api/logs/clear", methods=["POST"])
+def clear_logs():
+    current_role = session.get('role', 'read')
+    if current_role != 'write':
+        return "Acceso denegado", 403
+    try:
+        if os.path.exists(LOG_PATH):
+            os.remove(LOG_PATH)
+        write_log("Bitácora de sincronización limpiada por el administrador.")
+        return "success"
+    except Exception as e:
+        return str(e), 500
 
 if __name__ == "__main__":
     # Ensure default users are set up
