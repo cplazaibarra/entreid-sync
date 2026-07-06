@@ -249,7 +249,7 @@ def do_sync(is_manual=True):
                 except Exception as ex:
                     print(f"Error fetching groups for {username}: {ex}", file=sys.stderr)
             
-            groups_str = ",".join(groups_list)
+            groups_str = ",".join(sorted(groups_list))
             current_usernames.append(username)
             
             # Check if user already exists
