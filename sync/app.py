@@ -403,6 +403,7 @@ def index():
                 if not tenant_id or not client_id or not secret:
                     flash("Error: Debe completar todos los campos para probar la conexión.", "error")
                     return redirect(url_for("index"))
+                write_log("Iniciando prueba de conexión con Microsoft Entra ID...")
                 try:
                     token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
                     token_data = {
@@ -413,14 +414,17 @@ def index():
                     }
                     token_response = requests.post(token_url, data=token_data, timeout=10)
                     if token_response.status_code == 200:
+                        write_log("¡Prueba de conexión exitosa! Las credenciales de Microsoft Entra ID son válidas.")
                         flash("¡Conexión Exitosa! Las credenciales de Microsoft Entra ID son válidas.", "success")
                     else:
                         try:
                             err_desc = token_response.json().get("error_description", token_response.text)
                         except:
                             err_desc = token_response.text
+                        write_log(f"[ERROR-CONEXION] Fallo en la prueba de conexión: {err_desc}")
                         flash(f"Error de conexión: {err_desc}", "error")
                 except Exception as e:
+                    write_log(f"[ERROR-CONEXION] Fallo en la prueba de conexión: {str(e)}")
                     flash(f"Error al conectar con Microsoft Graph: {str(e)}", "error")
                 return redirect(url_for("index"))
                 
