@@ -391,12 +391,44 @@ def index():
             return redirect(url_for("index"))
             
         if action == "save":
-            config["tenant_id"] = request.form.get("tenant_id", "").strip()
-            config["client_id"] = request.form.get("client_id", "").strip()
-            # If client secret is empty, don't overwrite the existing one
+            submit_action = request.form.get("submit_action", "save")
+            
+            tenant_id = request.form.get("tenant_id", "").strip()
+            client_id = request.form.get("client_id", "").strip()
             secret = request.form.get("client_secret", "").strip()
-            if secret:
-                config["client_secret"] = secret
+            if not secret:
+                secret = config.get("client_secret", "")
+                
+            if submit_action == "test":
+                if not tenant_id or not client_id or not secret:
+                    flash("Error: Debe completar todos los campos para probar la conexión.", "error")
+                    return redirect(url_for("index"))
+                try:
+                    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+                    token_data = {
+                        "client_id": client_id,
+                        "scope": "https://graph.microsoft.com/.default",
+                        "client_secret": secret,
+                        "grant_type": "client_credentials"
+                    }
+                    token_response = requests.post(token_url, data=token_data, timeout=10)
+                    if token_response.status_code == 200:
+                        flash("¡Conexión Exitosa! Las credenciales de Microsoft Entra ID son válidas.", "success")
+                    else:
+                        try:
+                            err_desc = token_response.json().get("error_description", token_response.text)
+                        except:
+                            err_desc = token_response.text
+                        flash(f"Error de conexión: {err_desc}", "error")
+                except Exception as e:
+                    flash(f"Error al conectar con Microsoft Graph: {str(e)}", "error")
+                return redirect(url_for("index"))
+                
+            # Otherwise, save the configuration
+            config["tenant_id"] = tenant_id
+            config["client_id"] = client_id
+            if request.form.get("client_secret", "").strip():
+                config["client_secret"] = request.form.get("client_secret", "").strip()
                 
             config["sync_frequency"] = int(request.form.get("sync_frequency", 1))
             config["sync_hour"] = request.form.get("sync_hour", "03:00").strip()
