@@ -99,6 +99,7 @@ services:
     restart: unless-stopped
     environment:
       - LAM_SKIP_NETWORK_TEST=true
+      - LAM_SKIP_PRECONFIGURE=true
     ports:
       - "8080:80"
     volumes:
