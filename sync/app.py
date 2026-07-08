@@ -7,6 +7,7 @@ import threading
 import requests
 import pymysql
 import hashlib
+import ldap3
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 
 app = Flask(__name__)
@@ -26,7 +27,12 @@ default_config = {
     "sync_hour": "03:00",  # HH:MM
     "last_status": "never",
     "last_run": "",
-    "last_message": "Nunca se ha ejecutado la sincronización."
+    "last_message": "Nunca se ha ejecutado la sincronización.",
+    "ldap_server": "openldap",
+    "ldap_port": 389,
+    "ldap_bind_dn": "cn=admin,dc=mquest,dc=local",
+    "ldap_password": "admin_ldap_pass_2026",
+    "ldap_base_dn": "dc=mquest,dc=local"
 }
 
 def load_config():
@@ -138,19 +144,24 @@ def logout():
 sync_lock = threading.Lock()
 
 def do_sync(is_manual=True):
-    """Performs the synchronization between Entra ID and MariaDB."""
+    """Performs the synchronization between Entra ID and OpenLDAP."""
     if not sync_lock.acquire(blocking=False):
         return False, "La sincronización ya está en ejecución."
 
     trigger_type = "manual" if is_manual else "programada"
-    write_log(f"Iniciando sincronización {trigger_type}...")
+    write_log(f"Iniciando sincronización {trigger_type} hacia OpenLDAP...")
     
     config = load_config()
-    db_conn = None
     
     tenant_id = config.get("tenant_id")
     client_id = config.get("client_id")
     client_secret = config.get("client_secret")
+
+    ldap_server = config.get("ldap_server", "openldap")
+    ldap_port = int(config.get("ldap_port", 389))
+    ldap_bind_dn = config.get("ldap_bind_dn", "cn=admin,dc=mquest,dc=local")
+    ldap_password = config.get("ldap_password", "admin_ldap_pass_2026")
+    ldap_base_dn = config.get("ldap_base_dn", "dc=mquest,dc=local")
 
     if not tenant_id or not client_id or not client_secret:
         sync_lock.release()
@@ -178,7 +189,7 @@ def do_sync(is_manual=True):
         
         # 2. Fetch users from Microsoft Graph API
         write_log("Consultando lista de usuarios en Microsoft Graph...")
-        graph_url = "https://graph.microsoft.com/v1.0/users?$select=id,userPrincipalName,mail,givenName,surname,telephoneNumber,mobilePhone"
+        graph_url = "https://graph.microsoft.com/v1.0/users?$select=id,userPrincipalName,mail,givenName,surname,telephoneNumber,mobilePhone,displayName"
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json"
@@ -191,48 +202,53 @@ def do_sync(is_manual=True):
         entra_users = users_response.json().get("value", [])
         write_log(f"Se obtuvieron {len(entra_users)} usuarios desde Entra ID.")
         
-        # 3. Connect to MariaDB (auth-db)
-        write_log("Conectando a la base de datos MariaDB (auth-db)...")
-        db_conn = pymysql.connect(
-            host="auth-db",
-            user="privacyidea",
-            password="db_pass_mquest_2026",
-            database="privacyidea",
-            autocommit=True
-        )
+        # 3. Connect to OpenLDAP server
+        write_log(f"Conectando al servidor LDAP {ldap_server}:{ldap_port}...")
+        server = ldap3.Server(ldap_server, port=ldap_port, get_info=ldap3.ALL)
+        conn = ldap3.Connection(server, user=ldap_bind_dn, password=ldap_password, auto_bind=True)
+        write_log("Conexión LDAP establecida con éxito.")
+
+        # Ensure OUs exist
+        users_ou = f"ou=Users,{ldap_base_dn}"
+        groups_ou = f"ou=Groups,{ldap_base_dn}"
         
-        cursor = db_conn.cursor()
-        
-        # Ensure table exists and has groups column
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS entra_users (
-                username VARCHAR(191) PRIMARY KEY,
-                email VARCHAR(191),
-                givenname VARCHAR(100),
-                surname VARCHAR(100),
-                phone VARCHAR(50),
-                groups VARCHAR(500),
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute("ALTER TABLE entra_users ADD COLUMN IF NOT EXISTS groups VARCHAR(500)")
+        conn.search(ldap_base_dn, "(ou=Users)", search_scope=ldap3.SUBTREE)
+        if not conn.entries:
+            conn.add(users_ou, 'organizationalUnit', {'ou': 'Users'})
+            write_log("Creada OU en LDAP: ou=Users")
+            
+        conn.search(ldap_base_dn, "(ou=Groups)", search_scope=ldap3.SUBTREE)
+        if not conn.entries:
+            conn.add(groups_ou, 'organizationalUnit', {'ou': 'Groups'})
+            write_log("Creada OU en LDAP: ou=Groups")
+
+        # Get existing users in LDAP
+        conn.search(users_ou, '(objectClass=inetOrgPerson)', search_scope=ldap3.SUBTREE, attributes=['cn', 'mail', 'givenName', 'sn', 'displayName'])
+        ldap_users_dict = {entry.cn.value.lower(): entry.entry_dn for entry in conn.entries}
         
         # 4. Perform synchronization (Upsert and optional Delete of stale users)
         current_usernames = []
         inserted = 0
         updated = 0
+        deleted = 0
         
+        groups_map = {} # Maps group name to member DN list
+
         for user in entra_users:
             email = user.get("userPrincipalName")
             if not email:
                 continue
             username = email.replace('@', '_')
+            username_lower = username.lower()
             user_id = user.get("id")
                 
             mail_address = user.get("mail") or email
             givenname = user.get("givenName") or ""
             surname = user.get("surname") or ""
-            phone = user.get("telephoneNumber") or user.get("mobilePhone") or ""
+            display = user.get("displayName") or username.split('_')[0]
+            
+            user_dn = f"cn={username},{users_ou}"
+            current_usernames.append(username_lower)
             
             # Fetch groups for this user
             groups_list = []
@@ -245,55 +261,96 @@ def do_sync(is_manual=True):
                             if g.get("@odata.type") == "#microsoft.graph.group" and g.get("displayName"):
                                 if "Unified" in g.get("groupTypes", []):
                                     continue
-                                groups_list.append(g["displayName"].replace(" ", "_"))
+                                group_name = g["displayName"].replace(" ", "_")
+                                groups_list.append(group_name)
+                                if group_name not in groups_map:
+                                    groups_map[group_name] = []
+                                groups_map[group_name].append(user_dn)
                 except Exception as ex:
                     print(f"Error fetching groups for {username}: {ex}", file=sys.stderr)
             
-            groups_str = ",".join(sorted(groups_list))
-            current_usernames.append(username)
-            
-            # Check if user already exists
-            cursor.execute("SELECT email, givenname, surname, phone, groups FROM entra_users WHERE username = %s", (username,))
-            row = cursor.fetchone()
-            
-            if row is None:
+            # Add or update user in LDAP
+            if username_lower not in ldap_users_dict:
                 # Insert
-                cursor.execute("""
-                    INSERT INTO entra_users (username, email, givenname, surname, phone, groups) 
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (username, mail_address, givenname, surname, phone, groups_str))
-                write_log(f"[CREAR] Usuario synced: {username} (Grupos: {groups_str or 'Ninguno'})")
+                attrs = {
+                    'cn': username,
+                    'sn': surname if surname else username,
+                    'givenName': givenname if givenname else username,
+                    'displayName': display,
+                    'mail': mail_address,
+                    'userPassword': 'Mquest_pass_2026'
+                }
+                conn.add(user_dn, ['inetOrgPerson', 'organizationalPerson', 'person'], attrs)
+                write_log(f"[CREAR] Usuario LDAP synced: {username} (Grupos: {', '.join(sorted(groups_list)) or 'Ninguno'})")
                 inserted += 1
             else:
-                # Check if values changed
-                if row != (mail_address, givenname, surname, phone, groups_str):
-                    cursor.execute("""
-                        UPDATE entra_users 
-                        SET email = %s, givenname = %s, surname = %s, phone = %s, groups = %s 
-                        WHERE username = %s
-                    """, (mail_address, givenname, surname, phone, groups_str, username))
-                    write_log(f"[ACTUALIZAR] Usuario synced: {username} (Grupos: {groups_str or 'Ninguno'})")
+                # Update attributes
+                existing_entry = None
+                for entry in conn.entries:
+                    if entry.entry_dn.lower() == user_dn.lower():
+                        existing_entry = entry
+                        break
+                        
+                needs_update = False
+                modifications = {}
+                if existing_entry:
+                    if (existing_entry.mail.value or '') != mail_address:
+                        modifications['mail'] = [(ldap3.MODIFY_REPLACE, [mail_address])]
+                        needs_update = True
+                    if (existing_entry.givenName.value or '') != givenname:
+                        modifications['givenName'] = [(ldap3.MODIFY_REPLACE, [givenname])]
+                        needs_update = True
+                    if (existing_entry.sn.value or '') != surname:
+                        modifications['sn'] = [(ldap3.MODIFY_REPLACE, [surname if surname else username])]
+                        needs_update = True
+                    if (existing_entry.displayName.value or '') != display:
+                        modifications['displayName'] = [(ldap3.MODIFY_REPLACE, [display])]
+                        needs_update = True
+                        
+                if needs_update:
+                    conn.modify(user_dn, modifications)
+                    write_log(f"[ACTUALIZAR] Usuario LDAP synced: {username} (Grupos: {', '.join(sorted(groups_list)) or 'Ninguno'})")
                     updated += 1
-                    
-        # Delete users that are no longer in Entra ID
-        deleted = 0
-        if current_usernames:
-            # Get count of users to delete
-            format_strings = ','.join(['%s'] * len(current_usernames))
-            cursor.execute(f"SELECT COUNT(*) FROM entra_users WHERE username NOT IN ({format_strings})", tuple(current_usernames))
-            deleted = cursor.fetchone()[0]
-            
-            if deleted > 0:
-                cursor.execute(f"SELECT username FROM entra_users WHERE username NOT IN ({format_strings})", tuple(current_usernames))
-                for (del_user,) in cursor.fetchall():
-                    write_log(f"[ELIMINAR] Usuario obsoleto: {del_user}")
-                cursor.execute(f"DELETE FROM entra_users WHERE username NOT IN ({format_strings})", tuple(current_usernames))
-        else:
-            # Safe safeguard
-            pass
 
+        # Delete users that are no longer in Entra ID
+        for cn_lower, dn in ldap_users_dict.items():
+            if cn_lower not in current_usernames:
+                conn.delete(dn)
+                write_log(f"[ELIMINAR] Usuario LDAP obsoleto: {dn}")
+                deleted += 1
+
+        # 5. Synchronize Groups in LDAP
+        conn.search(groups_ou, '(objectClass=groupOfNames)', search_scope=ldap3.SUBTREE, attributes=['cn', 'member'])
+        existing_groups = {entry.cn.value.lower(): (entry.entry_dn, entry.member.values) for entry in conn.entries}
+        
+        for group_name, members in groups_map.items():
+            group_dn = f"cn={group_name},{groups_ou}"
+            group_name_lower = group_name.lower()
+            
+            # groupOfNames requires at least one member
+            if not members:
+                members = [ldap_bind_dn]
+                
+            if group_name_lower not in existing_groups:
+                attrs = {
+                    'cn': group_name,
+                    'member': members
+                }
+                conn.add(group_dn, ['groupOfNames'], attrs)
+                write_log(f"[GRUPO-CREAR] Grupo LDAP synced: {group_name} ({len(members)} miembros)")
+            else:
+                existing_dn, existing_members = existing_groups[group_name_lower]
+                set_existing = {m.lower() for m in existing_members}
+                set_new = {m.lower() for m in members}
+                
+                if set_existing != set_new:
+                    conn.modify(group_dn, {'member': [(ldap3.MODIFY_REPLACE, members)]})
+                    write_log(f"[GRUPO-ACTUALIZAR] Grupo LDAP synced: {group_name} ({len(members)} miembros)")
+
+        conn.unbind()
+        
         timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        msg = f"Sincronización exitosa: {inserted} creados, {updated} actualizados, {deleted} eliminados. Total en DB: {len(current_usernames)}."
+        msg = f"Sincronización LDAP exitosa: {inserted} creados, {updated} actualizados, {deleted} eliminados. Total en Directorio: {len(current_usernames)}."
         write_log(msg)
         
         config["last_status"] = "success"
@@ -306,7 +363,7 @@ def do_sync(is_manual=True):
         
     except Exception as e:
         timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        error_msg = f"Error durante la sincronización: {str(e)}"
+        error_msg = f"Error durante la sincronización LDAP: {str(e)}"
         print(error_msg, file=sys.stderr)
         write_log(f"[ERROR] {error_msg}")
         
@@ -315,20 +372,14 @@ def do_sync(is_manual=True):
         config["last_message"] = error_msg
         save_config(config)
         
-        if db_conn:
-            try:
-                db_conn.close()
-            except:
-                pass
-                
         sync_lock.release()
         return False, error_msg
 
 def scheduler_loop():
     """Background thread to schedule sync runs."""
     print("Background scheduler thread started.", flush=True)
-    # Give the DB time to boot on container start
-    time.sleep(10)
+    # Give the DB/LDAP time to boot on container start
+    time.sleep(15)
     
     while True:
         try:
@@ -399,9 +450,17 @@ def index():
             if not secret:
                 secret = config.get("client_secret", "")
                 
+            ldap_server = request.form.get("ldap_server", "openldap").strip()
+            ldap_port = int(request.form.get("ldap_port", 389))
+            ldap_bind_dn = request.form.get("ldap_bind_dn", "").strip()
+            ldap_password = request.form.get("ldap_password", "").strip()
+            if not ldap_password:
+                ldap_password = config.get("ldap_password", "")
+            ldap_base_dn = request.form.get("ldap_base_dn", "").strip()
+
             if submit_action == "test":
                 if not tenant_id or not client_id or not secret:
-                    flash("Error: Debe completar todos los campos para probar la conexión.", "error")
+                    flash("Error: Debe completar todos los campos de Entra ID para probar la conexión.", "error")
                     return redirect(url_for("index"))
                 write_log("Iniciando prueba de conexión con Microsoft Entra ID...")
                 try:
@@ -437,6 +496,13 @@ def index():
             config["sync_frequency"] = int(request.form.get("sync_frequency", 1))
             config["sync_hour"] = request.form.get("sync_hour", "03:00").strip()
             
+            # Save LDAP parameters
+            config["ldap_server"] = ldap_server
+            config["ldap_port"] = ldap_port
+            config["ldap_bind_dn"] = ldap_bind_dn
+            config["ldap_password"] = ldap_password
+            config["ldap_base_dn"] = ldap_base_dn
+
             save_config(config)
             write_log("Configuración de sincronización guardada por el administrador.")
             flash("Configuración guardada correctamente.", "success")

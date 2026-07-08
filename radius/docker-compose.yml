@@ -72,6 +72,41 @@ services:
       - auth_network
     depends_on:
       - auth-db
+      - openldap
+
+  openldap:
+    image: osixia/openldap:1.5.0
+    container_name: openldap
+    restart: unless-stopped
+    environment:
+      - LDAP_ORGANISATION=Mquest
+      - LDAP_DOMAIN=mquest.local
+      - LDAP_ADMIN_PASSWORD=admin_ldap_pass_2026
+      - LDAP_BASE_DN=dc=mquest,dc=local
+      - LDAP_TLS=false
+    ports:
+      - "3389:389"
+      - "3636:636"
+    volumes:
+      - ./openldap/var:/var/lib/ldap
+      - ./openldap/etc:/etc/ldap/slapd.d
+    networks:
+      - auth_network
+
+  ldap-account-manager:
+    image: ldapaccountmanager/lam:stable
+    container_name: ldap-account-manager
+    restart: unless-stopped
+    environment:
+      - LAM_SKIP_NETWORK_TEST=true
+    ports:
+      - "8080:80"
+    volumes:
+      - ./lam/config:/var/lib/ldap-account-manager/config
+    networks:
+      - auth_network
+    depends_on:
+      - openldap
 
 networks:
   auth_network:
